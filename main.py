@@ -1,80 +1,98 @@
-import websocket
-import json
-import threading
-import time
-import os
+import websocket, threading, json, time
 
-token = "Your Token Here"
+# Enter your authentication token here
+token = ''
+
+class requestHandler:
+    def __init__(self, token, logFile):
+        self.token = token
+        self.logFile = logFile
+
+    def sendRequest(self, ws, request):
+        ws.send(json.dumps(request))
+
+    def recieveRequest(self, ws):
+        response = ws.recv()
+        if response: return json.loads(response)
+
+    def heartbeat(self, interval, ws):
+        while True:
+            self.sendRequest(
+                ws = ws,
+                request = {
+                    'op': 1,
+                    'd': 'null'
+                }
+            )
+            time.sleep(interval)
+
+    def createSession(self, ws):
+        event = self.recieveRequest(ws)
+
+        try:
+            if event['t'] == 'SESSIONS_REPLACE':
+                for i in range(len(event['d'])):
+                    version, system, client = event['d'][i]['client_info']['version'], event['d'][i]['client_info']['os'], event['d'][i]['client_info']['client']
+                    session = event['d'][i]['session_id']
+
+                    if system == 'other' or 'web' or 'unknown': continue
+                    if session == 'all': self.createLog(version, system, client, self.logFile)
+                    else: self.createLog(version, system, client, self.logFile)
+
+            if event('op') == 11: print('Heartbeat Recived')
+
+        except Exception as e:
+            print(e)
 
 
-def send_json_request(ws, request):
-    ws.send(json.dumps(request))
+    def createLog(self, version, system, client, filename):
+        infomation = (f'''
+            Client Version: {version}
+            Operating System: {system}
+            Client Type: {client}
+        ''')
 
-def recieve_json_response(ws):
-    response = ws.recv()
-    if response:
-        return json.loads(response)
+        print(infomation)
+        logFile = open(file=str(filename), mode='a+', encoding='utf-8')
+        logFile.write(text=str(infomation))
+        logFile.close()
 
-def heartbeat(interval, ws):
-    print('Heartbeat begin')
-    while True:
-        time.sleep(interval)
-        heartbeatJSON = {
-            "op": 1,
-            "d": "null"
+def main():
+    ws = websocket.WebSocket()
+
+    handler = requestHandler(
+        token = str(token),
+        logFile = 'logs.txt'
+    )
+
+    ws.connect('wss://gateway.discord.gg/?v=6&encording=json')
+
+    event = handler.recieveRequest(ws)
+
+    heartbeat_interval = event['d']['heartbeat_interval'] / 1000
+
+    threading._start_new_thread(
+        target = handler.heartbeat,
+        args = (heartbeat_interval, ws)
+    )
+
+    handler.sendRequest(
+        ws = ws, 
+        request = {
+            'op': 2,
+            'd': {
+                'token': token,
+                'properties': {
+                    '$os': 'windows',
+                    '$browser': 'chrome',
+                    '$device': 'pc'
+                }   
+            }
         }
-        send_json_request(ws, heartbeatJSON)
-        print("Heartbeat sent")
+    )
 
+    while 1:
+        handler.createSession(ws)
 
-
-ws = websocket.WebSocket()
-ws.connect('wss://gateway.discord.gg/?v=6&encording=json')
-event = recieve_json_response(ws)
-
-heartbeat_interval = event['d']['heartbeat_interval'] / 1000
-threading._start_new_thread(heartbeat, (heartbeat_interval, ws))
-
-
-payload = {
-    'op': 2,
-    "d": {
-        "token": token,
-        "properties": {
-            "$os": "windows",
-            "$browser": "chrome",
-            "$device": 'pc'
-        }
-        
-    }
-}
-send_json_request(ws, payload)
-
-while True:
-    event = recieve_json_response(ws)
-
-    try:
-
-        if event['t'] == "SESSIONS_REPLACE":
-
-            for i in range(len(event['d'])):
-
-                if event['d'][i]['session_id'] == "all":
-
-                    print(f"DISCORD RICH PRESENCE SESSION \nVERSION: {event['d'][i]['client_info']['version']}\nOPERATING SYSTEM: {event['d'][i]['client_info']['os']}\nCLIENT TYPE: {event['d'][i]['client_info']['client']}\n====\n")
-                    with open("logs.txt", "a+", encoding='utf-8')as f:
-                        f.write(f"DISCORD RICH PRESENCE SESSION \nVERSION: {event['d'][i]['client_info']['version']}\nOPERATING SYSTEM: {event['d'][i]['client_info']['os']}\nCLIENT TYPE: {event['d'][i]['client_info']['client']}\n====\n")
-                if event['d'][i]['client_info']['os'] == "other" and event['d'][i]['client_info']['client'] == "web":
-                    continue #I assume this is just some previous sessions or something, there is always 3-4 of these sessions upon connect
-                if event['d'][i]['client_info']['os'] == "unknown" and event['d'][i]['client_info']['client'] == "unknown":
-                    continue #I assume this is just the actual discord gateway session
-                else:
-                    print(f"SESSION CONNECTED \nVERSION: {event['d'][i]['client_info']['version']}\nOPERATING SYSTEM: {event['d'][i]['client_info']['os']}\nCLIENT TYPE: {event['d'][i]['client_info']['client']}\n====\n")
-                    with open("logs.txt", "a+", encoding='utf-8')as f:
-                        f.write(f"SESSION CONNECTED \nVERSION: {event['d'][i]['client_info']['version']}\nOPERATING SYSTEM: {event['d'][i]['client_info']['os']}\nCLIENT TYPE: {event['d'][i]['client_info']['client']}\n====\n")
-                
-        op_code = event('op')
-        if op_code == 11:
-            print('heartbeat received')
-    except:
-        pass 
+if __name__ == '__main__':
+    main()
